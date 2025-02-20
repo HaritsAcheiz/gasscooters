@@ -133,36 +133,57 @@ class GasScootersScraper:
         for data in datas:
             try:
                 item_urls = []
+                item_names = []
                 page_type = ''
                 sub_col_urls = []
+                sub_col_names = []
                 tree = HTMLParser(data[1])
-                container_elem = tree.css_first('body > table:nth-child(1) > tbody:nth-child(1) > tr:nth-child(1) > td:nth-child(2)')
-                item_elems_ind = container_elem.css('font[size="2"] > font')
+                item_elems_ind = tree.css('font[size="2"] > font[color="#cc0000"]')
+                secondary_item_elems_ind = tree.css('body > table:nth-child(1) > tbody:nth-child(1) > tr:nth-child(1) > td:nth-child(2) > table:nth-child(1) > tbody:nth-child(1) > tr:nth-child(1) > td:nth-child(3) > table:nth-child(5) > tbody:nth-child(1) > tr > td > font:nth-child(1) > b')
                 sub_col_elems = tree.css('body > table:nth-child(1) > tbody:nth-child(1) > tr:nth-child(1) > td:nth-child(2) > table:nth-child(1) > tbody:nth-child(1) > tr:nth-child(1) > td:nth-child(3) > table:nth-child(5) > tbody:nth-child(1) > tr > td > font > a')
-                item_elems = tree.css('body > table:nth-child(1) > tbody:nth-child(1) > tr:nth-child(1) > td:nth-child(2) > table:nth-child(1) > tbody:nth-child(1) > tr:nth-child(1) > td > table > tbody > tr > td > center > a')
-                if item_elems_ind and not sub_col_elems:
+                item_elems = tree.css('body > table:nth-child(1) > tbody:nth-child(1) > tr:nth-child(1) > td:nth-child(2) > table:nth-child(1) > tbody:nth-child(1) > tr:nth-child(1) > td:nth-child(3) > table:nth-child(5) > tbody:nth-child(1) > tr > td > font > a')
+                if not item_elems:
+                    item_elems = tree.css('body > table:nth-child(1) > tbody:nth-child(1) > tr:nth-child(1) > td:nth-child(2) > table:nth-child(1) > tbody:nth-child(1) > tr:nth-child(1) > td:nth-child(3) > table:nth-child(5) > tbody:nth-child(1) > tr > td > font > b > a')
+                if not item_elems:
+                    item_elems = tree.css('body > table:nth-child(1) > tbody:nth-child(1) > tr:nth-child(1) > td:nth-child(2) > table:nth-child(1) > tbody:nth-child(1) > tr:nth-child(1) > td:nth-child(3) > table:nth-child(6) > tbody:nth-child(1) > tr > td > font > center > b > a')
+
+                # item_elems = tree.css('body > table:nth-child(1) > tbody:nth-child(1) > tr:nth-child(1) > td:nth-child(2) > table:nth-child(1) > tbody:nth-child(1) > tr:nth-child(1) > td > table > tbody > tr > td > center > a')
+                # if not item_elems:
+                #     item_elems = tree.css('body > table:nth-child(1) > tbody:nth-child(1) > tr:nth-child(1) > td:nth-child(2) > table:nth-child(1) > tbody:nth-child(1) > tr:nth-child(1) > td:nth-child(3) > table:nth-child(5) > tbody:nth-child(1) > tr:nth-child(2) > td > font:nth-child(1) > a')
+
+                if item_elems_ind or secondary_item_elems_ind:
                     page_type = 'collection'
                     for item_elem in item_elems:
                         item_urls.append('http://www.gasscooters.net/' + item_elem.attributes.get('href'))
+                        item_names.append(item_elem.text(strip=True))
                     item_urls = ';'.join(item_urls)
+                    item_names = ';'.join(item_names)
                     sub_col_urls = ''
+                    sub_col_names = ''
                 elif not item_elems_ind and sub_col_elems:
                     page_type = 'parent collection'
                     for sub_col_elem in sub_col_elems:
                         sub_col_urls.append('http://www.gasscooters.net/' + sub_col_elem.attributes.get('href'))
+                        sub_col_names.append(sub_col_elem.text(strip=True))
                     item_urls = ''
+                    item_names = ''
                     sub_col_urls = ';'.join(sub_col_urls)
+                    sub_col_names = ';'.join(sub_col_names)
                 else:
                     item_urls = ''
+                    item_names = ''
                     sub_col_urls = ''
+                    sub_col_names = ''
                     page_type = 'item'
-            except:
+            except Exception:
                 item_urls = ''
+                item_names = ''
                 sub_col_urls = ''
+                sub_col_names = ''
                 page_type = ''
             finally:
-                collections.append((data[0], page_type, item_urls, sub_col_urls))
-        collection_df = pd.DataFrame(columns=['product_url', 'page_type', 'item_urls', 'sub_col_urls'], data=collections)
+                collections.append((data[0], page_type, item_urls, item_names, sub_col_urls, sub_col_names))
+        collection_df = pd.DataFrame(columns=['product_url', 'page_type', 'item_urls', 'item_names', 'sub_col_urls', 'sub_col_names'], data=collections)
         collection_df.to_csv('data/collections.csv', index=False)
 
 
