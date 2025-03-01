@@ -1,6 +1,6 @@
 import json
 
-from httpx import AsyncClient
+from httpx import AsyncClient, Client
 from numpy import tile
 import pandas as pd
 from selectolax.parser import HTMLParser
@@ -11,9 +11,11 @@ import sqlite3
 import os
 from dotenv import load_dotenv
 from converter import *
+from urllib.parse import urlparse, parse_qs, urlunparse
 
 load_dotenv()
 limit = asyncio.Semaphore(20)
+
 
 @dataclass
 class GasScootersScraper:
@@ -40,7 +42,7 @@ class GasScootersScraper:
                     raise
 
     def read_source(self):
-        self.source = pd.read_csv('data/search.csv', encoding='latin1', usecols=['product-url'])
+        self.source = pd.read_csv('data/source.csv', encoding='latin1')
 
     async def fetch_with_retries(self, product_url):
         for attempt in range(self.max_retries):
@@ -116,7 +118,7 @@ class GasScootersScraper:
                 image_elements.append(small_img_elem)
             if image_elements:
                 for elem in image_elements:
-                    images.append(elem.attributes.get('href'))
+                    images.append(elem.attributes.get('href').strip())
                 result = ';'.join(images)
             else:
                 result = ''
@@ -132,6 +134,7 @@ class GasScootersScraper:
         collections = []
         for data in datas:
             try:
+                product_name = None
                 item_urls = []
                 item_names = []
                 page_type = ''
@@ -152,6 +155,10 @@ class GasScootersScraper:
                 #     item_elems = tree.css('body > table:nth-child(1) > tbody:nth-child(1) > tr:nth-child(1) > td:nth-child(2) > table:nth-child(1) > tbody:nth-child(1) > tr:nth-child(1) > td:nth-child(3) > table:nth-child(5) > tbody:nth-child(1) > tr:nth-child(2) > td > font:nth-child(1) > a')
 
                 if item_elems_ind or secondary_item_elems_ind:
+                    try:
+                        product_name = tree.css_first('font[size="5"]').text(strip=True)
+                    except Exception:
+                        print('product name not found')
                     page_type = 'collection'
                     for item_elem in item_elems:
                         item_urls.append('http://www.gasscooters.net/' + item_elem.attributes.get('href'))
@@ -161,6 +168,10 @@ class GasScootersScraper:
                     sub_col_urls = ''
                     sub_col_names = ''
                 elif not item_elems_ind and sub_col_elems:
+                    try:
+                        product_name = tree.css_first('font[size="5"]').text(strip=True)
+                    except Exception:
+                        print('product name not found')
                     page_type = 'parent collection'
                     for sub_col_elem in sub_col_elems:
                         sub_col_urls.append('http://www.gasscooters.net/' + sub_col_elem.attributes.get('href'))
@@ -170,21 +181,168 @@ class GasScootersScraper:
                     sub_col_urls = ';'.join(sub_col_urls)
                     sub_col_names = ';'.join(sub_col_names)
                 else:
+                    try:
+                        product_name = tree.css_first('font[size="5"]').text(strip=True)
+                    except Exception:
+                        print(f'product name not found {data[0]}')
                     item_urls = ''
                     item_names = ''
                     sub_col_urls = ''
                     sub_col_names = ''
                     page_type = 'item'
-            except Exception:
+            except Exception as e:
+                print(f'error due to {e}')
+                product_name = ''
                 item_urls = ''
                 item_names = ''
                 sub_col_urls = ''
                 sub_col_names = ''
                 page_type = ''
             finally:
-                collections.append((data[0], page_type, item_urls, item_names, sub_col_urls, sub_col_names))
-        collection_df = pd.DataFrame(columns=['product_url', 'page_type', 'item_urls', 'item_names', 'sub_col_urls', 'sub_col_names'], data=collections)
+                collections.append((data[0], product_name, page_type, item_urls, item_names, sub_col_urls, sub_col_names))
+        collection_df = pd.DataFrame(columns=['product_url', 'product_name', 'page_type', 'item_urls', 'item_names', 'sub_col_urls', 'sub_col_names'], data=collections)
         collection_df.to_csv('data/collections.csv', index=False)
+
+    def migrate_image(self):
+        pass
+
+    def parse_images(self, desc):
+        if pd.isna(desc):
+            result = ''
+        else:
+            tree = HTMLParser(desc)
+            origin_image_links = []
+            images = tree.css('img')
+            for image in images:
+                origin_image_link = image.attributes.get('src').strip()
+                origin_image_links.append(origin_image_link)
+            result = ';'.join(origin_image_links)
+
+        return result
+
+    def parse_docs(self, desc):
+        if pd.isna(desc):
+            result = ''
+        else:
+            tree = HTMLParser(desc)
+            origin_doc_links = []
+            docs = tree.css('a')
+            for doc in docs:
+                origin_doc_link = doc.attributes.get('src').strip()
+                origin_doc_links.append(origin_doc_link)
+            result = ';'.join(origin_doc_links)
+
+        return result
+
+    def parse_videos(self, desc):
+        if pd.isna(desc):
+            result = ''
+        else:
+            tree = HTMLParser(desc)
+            origin_video_links = []
+            videos = tree.css('iframe')
+            for video in videos:
+                origin_video_link = video.attributes.get('src').strip()
+                origin_video_links.append(origin_video_link)
+            result = ';'.join(origin_video_links)
+
+        return result
+
+    def image_link_correction(self, origin_image_links):
+        origin_image_links = origin_image_links.strip()
+        if 'system.netsuite.com/c.' in origin_image_links:
+            parts = origin_image_links.split("/")
+            account_id = parts[3].split(".")[1]
+            parts[2] = f"{account_id}.app.netsuite.com"
+            parts[-1] = parts[-1].replace(" ", "%20")
+            actual_image_links = "/".join(parts)
+
+        elif 'system.netsuite.com/core/media/media.nl' in origin_image_links:
+            parsed_url = urlparse(origin_image_links)
+            query_params = parse_qs(parsed_url.query)
+            if 'c' in query_params:
+                account_id = query_params['c'][0]
+                netloc = f"{account_id}.app.netsuite.com"
+                corrected_url = parsed_url._replace(netloc=netloc)
+                actual_image_links = urlunparse(corrected_url)
+            else:
+                actual_image_links = origin_image_links
+
+        elif ('ep.yimg.com/ty/cdn/gasscooters' in origin_image_links) or ('sep.yimg.com/ty/cdn/gasscooters' in origin_image_links):
+            temp_image_links = origin_image_links.replace('sep.yimg.com', 'ep.turbifycdn.com')
+            actual_image_links = temp_image_links.replace('ep.yimg.com', 'ep.turbifycdn.com')
+
+        elif 'lib.store.yahoo.net/lib/gasscooters' in origin_image_links:
+            actual_image_links = origin_image_links.replace('http://lib.store.yahoo.net/lib/gasscooters', 'https://sep.turbifycdn.com/ty/cdn/gasscooters')
+
+        else:
+            actual_image_links = origin_image_links
+
+        return actual_image_links
+
+    def video_link_correction(self, origin_video_links):
+        actual_video_links = origin_video_links.replace(
+            'http://lib.store.yahoo.net/lib/gasscooters',
+            'https://sep.turbifycdn.com/ty/cdn/gasscooters'
+        )
+
+        return actual_video_links
+
+    def download_images(self, actual_image_links):
+        if pd.isna(actual_image_links) or actual_image_links == '':
+            pass
+        else:
+            actual_image_links = actual_image_links.split(';')
+            for link in actual_image_links:
+                save_path = link.split('/')[-1]
+                file_path = os.path.join('data/downloads/', save_path)
+                if not os.path.isfile(file_path):
+                    try:
+                        with Client(follow_redirects=True) as client:
+                            response = client.get(link)
+
+                        if response.status_code == 200:
+                            with open(f'data/downloads/{save_path}', 'wb') as file:
+                                file.write(response.content)
+                            print(f"Image successfully downloaded and saved to {save_path}")
+                        else:
+                            print(f"Failed to download image. Status code: {response.status_code}")
+                    except Exception as e:
+                        print(f"An error occurred: {e}")
+                else:
+                    print(f'{save_path} is already exist')
+
+    def get_image_desc(self):
+        df = self.source.copy()
+        df['origin_image_links'] = df['caption'].apply(self.parse_images)
+        df['origin_image_links'] = df['origin_image_links'].apply(lambda x: x.split(';'))
+        # df['actual_image_links'] = df['actual_image_links'].apply(lambda x: x.split(';'))
+        df = df.explode('origin_image_links')
+        df['actual_image_links'] = df['origin_image_links'].apply(self.image_link_correction)
+        df['filename'] = df['origin_image_links'].apply(lambda x: x.split('/')[-1].split('?')[0] if 'media.nl' not in x else x.split('id=')[-1].split('&')[0])
+        df['file_type'] = df['filename'].apply(lambda x: '' if pd.isna(x) or x == '' else 'IMAGE')
+        # df['actual_image_links'].apply(self.download_images)
+
+        result = df[['product-url', 'filename', 'file_type', 'origin_image_links', 'actual_image_links']]
+        result = result.explode(['origin_image_links', 'actual_image_links'])
+        result.to_csv('data/description_image_link.csv', index=False)
+
+    def get_doc_desc(self):
+        df = self.source.copy()
+        df['origin_doc_links'] = df['caption'].apply(self.parse_docs)
+        df['origin_doc_links'] = df['origin_doc_links'].apply(lambda x: x.split(';'))
+
+    def get_video_desc(self):
+        df = self.source.copy()
+        df['origin_video_links'] = df['caption'].apply(self.parse_videos)
+        df['origin_video_links'] = df['origin_video_links'].apply(lambda x: x.split(';'))
+        df = df.explode('origin_video_links')
+        df['actual_video_links'] = df['origin_video_links'].apply(self.video_link_correction)
+        df['filename'] = df['origin_video_links'].apply(lambda x: x.split('/')[-1].split('?')[0] if 'media.nl' not in x else x.split('id=')[-1].split('&')[0])
+        df['file_type'] = df['filename'].apply(lambda x: '' if pd.isna(x) or x == '' else 'VIDEO')
+        result = df[['product-url', 'filename', 'file_type', 'origin_video_links', 'actual_video_links']]
+        result = result.explode(['origin_video_links', 'actual_video_links'])
+        result.to_csv('data/description_video_link.csv', index=False)
 
 
 if __name__ == '__main__':
@@ -192,4 +350,8 @@ if __name__ == '__main__':
     gs.read_source()
     # asyncio.run(gs.fetch_all())
     # gs.get_image()
-    gs.get_collection()
+    # gs.get_collection()
+    # gs.get_image_desc()
+    # gs.get_doc_desc()
+    gs.get_video_desc()
+    # print(gs.image_link_correction('http://lib.store.yahoo.net/lib/gasscooters/7107_susp_travel_d.jpg'))
