@@ -8,6 +8,7 @@ import pandas as pd
 from dotenv import load_dotenv
 from datetime import datetime, date
 from converter import csv_to_jsonl, get_handles
+import re
 
 load_dotenv()
 
@@ -1332,7 +1333,51 @@ class ShopifyApp:
             print(f"Failed to download file: {e}")
             raise
 
-    def upload_file(self, form_data, file_path, upload_url):
+    def read_staged_target_files(self, directory):
+        pattern = os.path.join(directory, "staged_target_*.json")
+        matching_files = glob(pattern)
+
+        # Sort files by sequence number
+        def extract_sequence_number(file_path):
+            match = re.search(r"staged_target_(\d+)\.json", os.path.basename(file_path))
+            if match:
+                return int(match.group(1))
+            return -1
+
+        matching_files.sort(key=extract_sequence_number)
+
+        data_list = []
+        for file_path in matching_files:
+            try:
+                with open(file_path, "r") as file:
+                    json_data = json.load(file)
+                    stagedTargets = json_data['data']['stagedUploadsCreate']['stagedTargets']
+                    for target in stagedTargets:
+                        parameters = target['parameters']
+                        data = {}
+                        data['uploadUrl'] = target['url']
+                        data['resourceUrl'] = target['resourceUrl']
+                        data[parameters[0]['name']] = parameters[0]['value']
+                        data[parameters[1]['name']] = parameters[1]['value']
+                        data[parameters[2]['name']] = parameters[2]['value']
+                        data[parameters[3]['name']] = parameters[3]['value']
+                        data_list.append(data)
+                    print(f"Successfully read {file_path}")
+            except Exception as e:
+                print(f"Failed to read {file_path}: {e}")
+
+        return data_list
+
+    def upload_file(self, GoogleAccessId, key, policy, signature, file_path, upload_url):
+        print("Uploading video file to staged path...")
+
+        form_data = {
+            "GoogleAccessId": GoogleAccessId,
+            "key": key,
+            "policy": policy,
+            "signature": signature,
+        }
+
         try:
             with open(file_path, "rb") as file:
                 files = {"file": file}
@@ -1340,7 +1385,7 @@ class ShopifyApp:
                     response = client.post(upload_url, data=form_data, files=files)
                     response.raise_for_status()
                     print("File uploaded successfully")
-                    print("Response:", response.json())
+                    print("Response:", response.content)
         except Exception as e:
             print(f"Failed to upload file: {e}")
             raise
@@ -1424,26 +1469,27 @@ class ShopifyApp:
 
     def import_bulk_video(self, client, video_df):
         # Generate Stage Target
-        # video_json = self.video_to_json(video_df)
-        # video_json_list = json.loads(video_json)
-        # chunked_video_json = [video_json_list[i:i + 10] for i in range(0, len(video_json_list), 10)]
-        # for i, json_video in enumerate(chunked_video_json):
-        #     staged_target = self.generate_staged_target_video(client, json_video)
-        #     with open(f'data/staged_target_{i}.json', 'w', encoding='utf-8') as file:
-        #         json.dump(staged_target, file)
+        video_json = self.video_to_json(video_df)
+        video_json_list = json.loads(video_json)
+        chunked_video_json = [video_json_list[i:i + 10] for i in range(0, len(video_json_list), 10)]
+        for i, json_video in enumerate(chunked_video_json):
+            staged_target = self.generate_staged_target_video(client, json_video)
+            with open(f'data/staged_target_{i}.json', 'w', encoding='utf-8') as file:
+                json.dump(staged_target, file)
 
         # Download Video File to Local
-        # df = video_df.copy()
-        # df['save_path'] = df['filename'].apply(lambda x: 'data/downloads/video/' + x)
-        # df.apply(lambda x: self.download_file(x['actual_video_links'], save_path=x["save_path"]), axis=1)
-        # df.to_csv('data/downloaded_video.csv', index=False)
+        df = video_df.copy()
+        df['save_path'] = df['filename'].apply(lambda x: 'data/downloads/video/' + x)
+        df.apply(lambda x: self.download_file(x['actual_video_links'], save_path=x["save_path"]), axis=1)
+        df.to_csv('data/downloaded_video.csv', index=False)
 
         # Upload Video
         df = pd.read_csv('data/downloaded_video.csv')
-        with open('data/staged_target_0.json', 'r') as file:
-            staged_target_df = json.load(file)
-        print(df)
-        print(staged_target_df)
+        staged_target = self.read_staged_target_files('data')
+        staged_target_df = pd.DataFrame().from_records(staged_target)
+        concated_df = pd.concat([df, staged_target_df], axis=1)
+        concated_df.to_csv('data/concated_df.csv', index=False)
+        concated_df.apply(lambda x: s.upload_file(x['GoogleAccessId'], x['key'], x['policy'], x['signature'], x['save_path'], x['uploadUrl']), axis=1)
 
     def check_bulk_operation_status(self, client, bulk_operation_id):
         query = f'''
@@ -1651,12 +1697,13 @@ if __name__ == '__main__':
     # files_data.apply(lambda x: s.create_file(client, x['origin_image_links'], x['filename'], x['file_type'], x['actual_image_links']), axis=1)
 
     ## Videos
-    files_data = pd.read_csv('data/description_video_link.csv')
-    files_data = files_data[pd.notna(files_data['actual_video_links'])]
-    s.import_bulk_video(client, files_data)
-    # files_data.drop_duplicates('actual_video_links', inplace=True)
-    # files_data.apply(lambda x: s.create_file(client, x['origin_video_links'], x['filename'], x['file_type'], x['actual_video_links']), axis=1)
+    # files_data = pd.read_csv('data/description_video_link.csv')
+    # files_data = files_data[pd.notna(files_data['actual_video_links'])]
+    # s.import_bulk_video(client, files_data)
 
+    files_data = pd.read_csv('data/concated_df.csv')
+    files_data.drop_duplicates('actual_video_links', inplace=True)
+    files_data.apply(lambda x: s.create_file(client, x['origin_video_links'], x['filename'], x['file_type'], x['resourceUrl']), axis=1)
 
     # =================================== get file ====================================
     # sleep(300)
