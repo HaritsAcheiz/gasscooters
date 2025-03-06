@@ -260,20 +260,22 @@ class ShopifyApp:
         }
         '''
         variables = {
-                     "input": {
-                               "descriptionHtml": descriptionHtml,
-                               "image": {
-                                         "src": image_src
-                                        },
-                               # "products": product_id,
-                               "ruleSet": {"appliedDisjunctively": appliedDisjuntively,
-                                           "rules": {"column": column,
-                                                     "relation": relation,
-                                                     "condition": condition
-                                                     }
-                                           },
-                               "title": title
-                     }
+            "input": {
+                "descriptionHtml": descriptionHtml,
+                "image": {
+                    "src": image_src
+                },
+                # "products": product_id,
+                "ruleSet": {
+                    "appliedDisjunctively": appliedDisjuntively,
+                    "rules": {
+                        "column": column,
+                        "relation": relation,
+                        "condition": condition
+                    }
+                },
+                "title": title
+            }
         }
 
         while 1:
@@ -680,12 +682,86 @@ class ShopifyApp:
         return response.json()
 
     ## Files
-    def get_file(self, client, created_at, updated_at, after):
+    def get_file(self, client, created_at, updated_at, after, media_type="Not defined"):
         print("Fetching file data...")
-        if after == '':
-            query = '''
-                    query getFilesByCreatedAt($query:String!){
-                        files(first:250, query:$query) {
+        if media_type in ('IMAGE', 'VIDEO', 'GenericFile'):
+            if after == '':
+                if media_type == 'IMAGE':
+                    query = '''
+                            query getFilesByCreatedAt($query:String!){
+                                files(first:250, query:$query) {
+                                    edges {
+                                        node {
+                                            id
+                                            preview{
+                                                image{
+                                                    altText
+                                                    url
+                                                }
+                                            }
+                                            fileStatus
+                                        }
+                                    }
+                                    pageInfo{
+                                        hasNextPage
+                                        endCursor
+                                    }
+                                }
+                            }
+                            '''
+                elif media_type == 'VIDEO':
+                    query = '''
+                        query getFilesByCreatedAt($query:String!){
+                            files(first:250, query:$query) {
+                                edges {
+                                    node {
+                                        id
+                                        ... on Video {
+                                            sources{
+                                                url
+                                            }
+                                        }
+                                        alt
+                                        fileStatus
+                                    }
+                                }
+                                pageInfo{
+                                    hasNextPage
+                                    endCursor
+                                }
+                            }
+                        }
+                    '''
+                elif media_type == 'GenericFile':
+                    query = '''
+                        query getFilesByCreatedAt($query:String!){
+                            files(first:250, query:$query) {
+                                edges {
+                                    node {
+                                        id
+                                        ... on GenericFile {
+                                            url
+                                        }
+                                        alt
+                                        fileStatus
+                                    }
+                                }
+                                pageInfo{
+                                    hasNextPage
+                                    endCursor
+                                }
+                            }
+                        }
+                    '''
+
+                # variables = {'query': "(created_at:>={}) AND (updated_at:<={})".format(created_at, updated_at)}
+                variables = {'query': "(created_at:>={}) AND (media_type:{})".format(created_at, media_type)}
+
+            else:
+                if media_type == "IMAGE":
+                    query = '''
+                    query getFilesByCreatedAt($query:String!, $after:String!){
+                        files(first:250, after:$after, query:$query) {
                             edges {
                                 node {
                                     id
@@ -705,53 +781,68 @@ class ShopifyApp:
                         }
                     }
                     '''
-
-            # variables = {'query': "(created_at:>={}) AND (updated_at:<={})".format(created_at, updated_at)}
-            variables = {'query': "(created_at:>={})".format(created_at)}
-
-        else:
-
-            query = '''
-            query getFilesByCreatedAt($query:String!, $after:String!){
-                files(first:250, after:$after, query:$query) {
-                    edges {
-                        node {
-                            id
-                            preview{
-                                image{
-                                    altText
-                                    url
+                elif media_type == 'VIDEO':
+                    query = '''
+                    query getFilesByCreatedAt($query:String!, $after:String!){
+                        files(first:250, after:$after, query:$query) {
+                            edges {
+                                node {
+                                    id
+                                    ... on Video {
+                                        altText
+                                        url
+                                    }
+                                    fileStatus
                                 }
                             }
-                            fileStatus
+                            pageInfo{
+                                hasNextPage
+                                endCursor
+                            }
                         }
                     }
-                    pageInfo{
-                        hasNextPage
-                        endCursor
+                    '''
+                elif media_type == 'GenericFile':
+                    query = '''
+                    query getFilesByCreatedAt($query:String!, $after:String!){
+                        files(first:250, after:$after, query:$query) {
+                            edges {
+                                node {
+                                    id
+                                    ... on GenericFile {
+                                        url
+                                    }
+                                    alt
+                                    fileStatus
+                                }
+                            }
+                            pageInfo{
+                                hasNextPage
+                                endCursor
+                            }
+                        }
                     }
-                }
-            }
-            '''
+                    '''
 
-            # variables = {'query': "(created_at:>={}) AND (updated_at:<={})".format(created_at, updated_at),
-            #              'after': after}
-            variables = {'query': "(created_at:>={})".format(created_at),
-                         'after': after}
-        retries = 0
-        while retries < 3:
-            response = client.post(f'https://{self.store_name}.myshopify.com/admin/api/{self.api_version}/graphql.json',
-                                   json={'query': query, 'variables': variables})
-            try:
-                result = response.json()
-                print(result['data'])
-                break
-            except Exception:
-                retries += 1
-                sleep(1)
-                continue
+                # variables = {'query': "(created_at:>={}) AND (updated_at:<={})".format(created_at, updated_at),
+                #              'after': after}
+                variables = {'query': "(created_at:>={} AND (media_type:{}))".format(created_at, media_type),
+                             'after': after}
+            retries = 0
+            while retries < 3:
+                response = client.post(f'https://{self.store_name}.myshopify.com/admin/api/{self.api_version}/graphql.json',
+                                       json={'query': query, 'variables': variables})
+                try:
+                    result = response.json()
+                    break
+                except Exception:
+                    retries += 1
+                    sleep(1)
+                    continue
 
-        return result
+            return result
+        else:
+            print('File Type is Invalid')
 
     def bulk_get_file(self):
         # print("Getting bulk file...")
@@ -1310,13 +1401,25 @@ class ShopifyApp:
             return "0"  # Default value if an exception occurs
 
     def video_to_json(self, df):
-        print('Convert video df to json...')
+        print('Converting video df to json...')
         converted_df = df[['filename', 'file_type', 'actual_video_links']].copy()
         converted_df['mimeType'] = "video/mp4"
         converted_df.rename(columns={'file_type': 'resource'}, inplace=True)
         converted_df['httpMethod'] = 'POST'
         converted_df['fileSize'] = converted_df['actual_video_links'].apply(lambda x: self.get_remote_file_size(x))
         converted_df.drop(columns='actual_video_links', inplace=True)
+        result = converted_df.to_json(orient="records")
+
+        return result
+
+    def doc_to_json(self, df):
+        print('Converting doc df to json...')
+        converted_df = df[['filename', 'file_type', 'actual_doc_links']].copy()
+        converted_df['mimeType'] = "application/pdf"
+        converted_df.rename(columns={'file_type': 'resource'}, inplace=True)
+        converted_df['httpMethod'] = 'POST'
+        converted_df['fileSize'] = converted_df['actual_doc_links'].apply(lambda x: self.get_remote_file_size(x))
+        converted_df.drop(columns='actual_doc_links', inplace=True)
         result = converted_df.to_json(orient="records")
 
         return result
@@ -1331,7 +1434,6 @@ class ShopifyApp:
             print(f"File downloaded successfully to {save_path}")
         except Exception as e:
             print(f"Failed to download file: {e}")
-            raise
 
     def read_staged_target_files(self, directory):
         pattern = os.path.join(directory, "staged_target_*.json")
@@ -1357,10 +1459,8 @@ class ShopifyApp:
                         data = {}
                         data['uploadUrl'] = target['url']
                         data['resourceUrl'] = target['resourceUrl']
-                        data[parameters[0]['name']] = parameters[0]['value']
-                        data[parameters[1]['name']] = parameters[1]['value']
-                        data[parameters[2]['name']] = parameters[2]['value']
-                        data[parameters[3]['name']] = parameters[3]['value']
+                        for i in range(len(parameters)):
+                            data[parameters[i]['name']] = parameters[i]['value']
                         data_list.append(data)
                     print(f"Successfully read {file_path}")
             except Exception as e:
@@ -1368,7 +1468,7 @@ class ShopifyApp:
 
         return data_list
 
-    def upload_file(self, GoogleAccessId, key, policy, signature, file_path, upload_url):
+    def upload_video_file(self, GoogleAccessId, key, policy, signature, file_path, upload_url):
         print("Uploading video file to staged path...")
 
         form_data = {
@@ -1389,6 +1489,32 @@ class ShopifyApp:
         except Exception as e:
             print(f"Failed to upload file: {e}")
             raise
+
+    def upload_doc_file(self, contentType, successActionStatus, acl, key, xGoogDate, xGoogCred, xGoogAlgo, xGoogSign, policy, file_path, upload_url):
+        print("Uploading document file to staged path...")
+
+        form_data = {
+            "Content-Type": contentType,
+            "success_action_status": successActionStatus,
+            "acl": acl,
+            "key": key,
+            "x-goog-date": xGoogDate,
+            "x-goog-credential": xGoogCred,
+            "x-goog-algorithm": xGoogAlgo,
+            "x-goog-signature": xGoogSign,
+            "policy": policy,
+        }
+
+        try:
+            with open(file_path, "rb") as file:
+                files = {"file": file}
+                with httpx.Client() as client:
+                    response = client.post(upload_url, data=form_data, files=files)
+                    response.raise_for_status()
+                    print("File uploaded successfully")
+                    print("Response:", response.content)
+        except Exception as e:
+            print(f"Failed to upload file: {e}")
 
     def upload_jsonl(self, staged_target, jsonl_path):
         print("Uploading jsonl file to staged path...")
@@ -1489,7 +1615,32 @@ class ShopifyApp:
         staged_target_df = pd.DataFrame().from_records(staged_target)
         concated_df = pd.concat([df, staged_target_df], axis=1)
         concated_df.to_csv('data/concated_df.csv', index=False)
-        concated_df.apply(lambda x: s.upload_file(x['GoogleAccessId'], x['key'], x['policy'], x['signature'], x['save_path'], x['uploadUrl']), axis=1)
+        concated_df.apply(lambda x: s.upload_video_file(x['GoogleAccessId'], x['key'], x['policy'], x['signature'], x['save_path'], x['uploadUrl']), axis=1)
+
+    def import_bulk_doc(self, client, doc_df):
+        # Generate Stage Target
+        doc_df.drop_duplicates('actual_doc_links', inplace=True)
+        doc_json = self.doc_to_json(doc_df)
+        doc_json_list = json.loads(doc_json)
+        chunked_doc_json = [doc_json_list[i:i + 10] for i in range(0, len(doc_json_list), 10)]
+        for i, json_doc in enumerate(chunked_doc_json):
+            staged_target = self.generate_staged_target_video(client, json_doc)
+            with open(f'data/staged_target_{i}.json', 'w', encoding='utf-8') as file:
+                json.dump(staged_target, file)
+
+        # Download Document File to Local
+        df = doc_df.copy()
+        df['save_path'] = df['filename'].apply(lambda x: 'data/downloads/doc/' + x)
+        df.apply(lambda x: self.download_file(x['actual_doc_links'], save_path=x["save_path"]), axis=1)
+        df.to_csv('data/downloaded_doc.csv', index=False)
+
+        # Upload Video
+        df = pd.read_csv('data/downloaded_doc.csv')
+        staged_target = self.read_staged_target_files('data')
+        staged_target_df = pd.DataFrame().from_records(staged_target)
+        concated_df = pd.concat([df, staged_target_df], axis=1)
+        concated_df.to_csv('data/concated_doc_df.csv', index=False)
+        concated_df.apply(lambda x: s.upload_doc_file(x['Content-Type'], x['success_action_status'], x['acl'], x['key'], x['x-goog-date'], x['x-goog-credential'], x['x-goog-algorithm'], x['x-goog-signature'], x['policy'], x['save_path'], x['uploadUrl']), axis=1)
 
     def check_bulk_operation_status(self, client, bulk_operation_id):
         query = f'''
@@ -1609,14 +1760,30 @@ if __name__ == '__main__':
     #     df['product_id'] = df.apply(lambda x: s.query_product_by_handle(client, x['Handle']), axis=1)
     #     df.to_csv(filename, index=False)
 
-    # df = pd.read_csv('Collection_Feeds_rev2.csv')
-    # df.apply(lambda x: s.create_collection(client=client, descriptionHtml=x['descriptionHtml'],
+    # =================================get all collections==============================
+    # has_next_page = True
+    # cursor = None
+    # results = list()
+    # while has_next_page:
+    #     response = s.get_collections(client, cursor=cursor)
+    #     records = response['data']['collections']['nodes']
+    #     results.extend(records)
+    #     has_next_page = response['data']['collections']['pageInfo']['hasNextPage']
+    #     cursor = response['data']['collections']['pageInfo']['endCursor']
+    # results_df = pd.DataFrame.from_records(results)
+    # results_df.to_csv('data/existing_collection_list.csv', index=False)
+
+    # ============================ create collections ==================================
+    # df = pd.read_csv('data/source_collections.csv')
+    # df.apply(lambda x: s.create_collection(client=client, descriptionHtml=x['caption'],
     #                                        image_src=x['imageSrc'], title=x['title'],
     #                                        appliedDisjuntively=x['appliedDisjuntively'], column=x['column'],
     #                                        relation=x['relation'], condition=x['title']
     #                                        ),
     #          axis=1
     #          )
+
+    # ==================================================================================
 
     # df = pd.read_csv('products_update_tag_rev1.csv')
     # df = df[df['Handle'].str.contains('lifting-forklift-frame')]
@@ -1654,19 +1821,6 @@ if __name__ == '__main__':
     # s.query_products(client)
     # s.get_publications(client)
 
-    # ==============================================get all collections===================================
-    # has_next_page = True
-    # cursor = None
-    # results = list()
-    # while has_next_page:
-    #     response = s.get_collections(client, cursor=cursor)
-    #     records = response['data']['collections']['nodes']
-    #     results.extend(records)
-    #     has_next_page = response['data']['collections']['pageInfo']['hasNextPage']
-    #     cursor = response['data']['collections']['pageInfo']['endCursor']
-    # results_df = pd.DataFrame.from_records(results)
-    # results_df.to_csv('data/collection_list.csv', index=False)
-
     # ============================================get product id by handle===============================
     # collection_df = pd.read_csv('data/collection_list.csv')
     # chunked_handles = get_handles('data/collection_list.csv')
@@ -1691,30 +1845,43 @@ if __name__ == '__main__':
 
     # ====================================== create files =============================
     ## Images
-    # files_data = pd.read_csv('data/description_image_link.csv')
+    # files_data = pd.read_csv('data/description_image_link_rev1.csv')
     # files_data = files_data[pd.notna(files_data['actual_image_links'])]
+    # Create File should drop duplicate
     # files_data.drop_duplicates('actual_image_links', inplace=True)
     # files_data.apply(lambda x: s.create_file(client, x['origin_image_links'], x['filename'], x['file_type'], x['actual_image_links']), axis=1)
 
     ## Videos
-    # files_data = pd.read_csv('data/description_video_link.csv')
+    # files_data = pd.read_csv('data/description_video_link_rev1.csv')
     # files_data = files_data[pd.notna(files_data['actual_video_links'])]
     # s.import_bulk_video(client, files_data)
 
-    files_data = pd.read_csv('data/concated_df.csv')
-    files_data.drop_duplicates('actual_video_links', inplace=True)
-    files_data.apply(lambda x: s.create_file(client, x['origin_video_links'], x['filename'], x['file_type'], x['resourceUrl']), axis=1)
+    # files_data = pd.read_csv('data/concated_df.csv')
+    # Create File should drop duplicate
+    # files_data.drop_duplicates('actual_video_links', inplace=True)
+    # files_data.apply(lambda x: s.create_file(client, x['origin_video_links'], x['filename'], x['file_type'], x['resourceUrl']), axis=1)
+
+    ## Document
+    # files_data = pd.read_csv('data/description_doc_link_rev1.csv')
+    # files_data = files_data[pd.notna(files_data['actual_doc_links']) & files_data['filename'].str.contains('.pdf')]
+    # s.import_bulk_doc(client, files_data)
+
+    # files_data = pd.read_csv('data/concated_doc_df.csv')
+    # Create File should drop duplicate
+    # files_data.drop_duplicates('actual_doc_links', inplace=True)
+    # files_data.apply(lambda x: s.create_file(client, x['origin_doc_links'], x['filename'], x['file_type'], x['resourceUrl']), axis=1)
 
     # =================================== get file ====================================
+    ## Image
     # sleep(300)
     # updated_at = '2025-02-25T20:00:00Z'
-    # created_at = '2025-02-25T19:58:00Z'
+    # created_at = '2025-02-22T00:00:00Z'
     # after = ''
     # has_next_page = True
     # complete_file_ids = []
     # master_shopify_images = []
     # while has_next_page:
-    #     file_data = s.get_file(client, created_at=created_at, updated_at=updated_at, after=after)
+    #     file_data = s.get_file(client, created_at=created_at, updated_at=updated_at, after=after, media_type='IMAGE')
     #     after = file_data['data']['files']['pageInfo']['endCursor']
     #     file_edges = file_data['data']['files']['edges']
     #     parsed_files_data = []
@@ -1730,9 +1897,65 @@ if __name__ == '__main__':
     #     master_shopify_images.extend(parsed_files_data)
     #     complete_file_ids.extend(file_ids)  # For deleting files
     #     has_next_page = file_data['data']['files']['pageInfo']['hasNextPage']
-
     # master_shopify_images_df = pd.DataFrame().from_records(master_shopify_images)
-    # master_shopify_images_df.to_csv('master_shopify_images.csv', index=False)
+    # master_shopify_images_df.to_csv('data/master_shopify_images_rev1.csv', index=False)
+
+    ## Video
+    # updated_at = '2025-02-25T20:00:00Z'
+    # created_at = '2025-02-28T00:00:00Z'
+    # after = ''
+    # has_next_page = True
+    # complete_file_ids = []
+    # master_shopify_video = []
+    # while has_next_page:
+    #     file_data = s.get_file(client, created_at=created_at, updated_at=updated_at, after=after, media_type="VIDEO")
+    #     after = file_data['data']['files']['pageInfo']['endCursor']
+    #     file_edges = file_data['data']['files']['edges']
+    #     parsed_files_data = []
+    #     file_ids = []  # For deleting files
+    #     for data in file_edges:
+    #         if data['node']['sources']:
+    #             parsed_file_data = data['node']['sources'][0]
+    #             parsed_file_data['altText'] = data['node']['alt']
+    #             parsed_file_data['status'] = data['node']['fileStatus']
+    #         else:
+    #             parsed_file_data = {'url': '', 'altText': '', 'status': ''}
+    #         file_ids.append(data['node']['id'])  # For deleting files
+    #         parsed_files_data.append(parsed_file_data)
+    #     master_shopify_video.extend(parsed_files_data)
+    #     complete_file_ids.extend(file_ids)  # For deleting files
+    #     has_next_page = file_data['data']['files']['pageInfo']['hasNextPage']
+    # master_shopify_videos_df = pd.DataFrame().from_records(master_shopify_video)
+    # master_shopify_videos_df.to_csv('data/master_shopify_videos_rev1.csv', index=False)
+
+    ## Document
+    # updated_at = '2025-02-25T20:00:00Z'
+    # created_at = '2025-03-02T00:00:00Z'
+    # after = ''
+    # has_next_page = True
+    # complete_file_ids = []
+    # master_shopify_docs = []
+    # while has_next_page:
+    #     file_data = s.get_file(client, created_at=created_at, updated_at=updated_at, after=after, media_type='GenericFile')
+    #     after = file_data['data']['files']['pageInfo']['endCursor']
+    #     file_edges = file_data['data']['files']['edges']
+    #     parsed_files_data = []
+    #     file_ids = []  # For deleting files
+    #     for data in file_edges:
+    #         if data['node']:
+    #             parsed_file_data = {}
+    #             parsed_file_data['altText'] = data['node']['alt']
+    #             parsed_file_data['url'] = data['node']['url']
+    #             parsed_file_data['status'] = data['node']['fileStatus']
+    #         else:
+    #             parsed_file_data = {'altText': '', 'url': '', 'status': ''}
+    #         file_ids.append(data['node']['id'])  # For deleting files
+    #         parsed_files_data.append(parsed_file_data)
+    #     master_shopify_docs.extend(parsed_files_data)
+    #     complete_file_ids.extend(file_ids)  # For deleting files
+    #     has_next_page = file_data['data']['files']['pageInfo']['hasNextPage']
+    # master_shopify_docs_df = pd.DataFrame().from_records(master_shopify_docs)
+    # master_shopify_docs_df.to_csv('master_shopify_docs_rev1.csv', index=False)
 
     # =================================== delete_file =================================
     # chunked_file_ids = [complete_file_ids[i:i + 50] for i in range(0, len(complete_file_ids), 50)]
@@ -1747,12 +1970,19 @@ if __name__ == '__main__':
 
     # Generate replacer
     ## Images
-    # master_shopify_images_df = pd.read_csv('master_shopify_images.csv')
+    # master_shopify_images_df = pd.read_csv('master_shopify_images_rev1.csv')
     # files_data = files_data.merge(master_shopify_images_df, how='left', left_on='origin_image_links', right_on='altText')
     # files_data.drop(columns='altText', inplace=True)
     # files_data.to_csv('data/description_image_link_replacer.csv', index=False)
 
     ## Videos
-    # files_data = files_data.merge(master_shopify_video_df, how='left', left_on='origin_video_links', right_on='altText')
+    # master_shopify_videos_df = pd.read_csv('data/master_shopify_videos_rev1.csv')
+    # files_data = files_data.merge(master_shopify_videos_df, how='left', left_on='origin_video_links', right_on='altText')
     # files_data.drop(columns='altText', inplace=True)
     # files_data.to_csv('data/description_video_link_replacer.csv', index=False)
+
+    ## Document
+    # master_shopify_docs_df = pd.read_csv('master_shopify_docs_rev1.csv')
+    # files_data = files_data.merge(master_shopify_docs_df, how='left', left_on='origin_doc_links', right_on='altText')
+    # files_data.drop(columns='altText', inplace=True)
+    # files_data.to_csv('data/description_doc_link_replacer.csv', index=False)

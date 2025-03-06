@@ -42,7 +42,7 @@ class GasScootersScraper:
                     raise
 
     def read_source(self):
-        self.source = pd.read_csv('data/source.csv', encoding='latin1')
+        self.source = pd.read_csv('data/search.MMcq41.csv', encoding='latin1')
 
     async def fetch_with_retries(self, product_url):
         for attempt in range(self.max_retries):
@@ -225,12 +225,18 @@ class GasScootersScraper:
             result = ''
         else:
             tree = HTMLParser(desc)
-            origin_doc_links = []
             docs = tree.css('a')
-            for doc in docs:
-                origin_doc_link = doc.attributes.get('src').strip()
-                origin_doc_links.append(origin_doc_link)
-            result = ';'.join(origin_doc_links)
+            origin_doc_links = []
+            if docs:
+                for doc in docs:
+                    origin_doc_link = doc.attributes.get('href')
+                    if origin_doc_link:
+                        origin_doc_links.append(origin_doc_link.strip())
+                    else:
+                        continue
+                result = ';'.join(origin_doc_links)
+            else:
+                result = ''
 
         return result
 
@@ -288,6 +294,20 @@ class GasScootersScraper:
 
         return actual_video_links
 
+    def doc_link_correction(self, origin_doc_links):
+        if ('ep.yimg.com/ty/cdn/gasscooters' in origin_doc_links) or ('sep.yimg.com/ty/cdn/gasscooters' in origin_doc_links):
+            temp_doc_links = origin_doc_links.replace('sep.yimg.com', 'ep.turbifycdn.com')
+            actual_doc_links = temp_doc_links.replace('ep.yimg.com', 'ep.turbifycdn.com')
+        elif 'lib.store.yahoo.net/lib/gasscooters' in origin_doc_links:
+            actual_doc_links = origin_doc_links.replace(
+                'http://lib.store.yahoo.net/lib/gasscooters',
+                'https://sep.turbifycdn.com/ty/cdn/gasscooters'
+            )
+        else:
+            actual_doc_links = origin_doc_links
+
+        return actual_doc_links
+
     def download_images(self, actual_image_links):
         if pd.isna(actual_image_links) or actual_image_links == '':
             pass
@@ -325,12 +345,19 @@ class GasScootersScraper:
 
         result = df[['product-url', 'filename', 'file_type', 'origin_image_links', 'actual_image_links']]
         result = result.explode(['origin_image_links', 'actual_image_links'])
-        result.to_csv('data/description_image_link.csv', index=False)
+        result.to_csv('data/description_image_link_rev1.csv', index=False)
 
     def get_doc_desc(self):
         df = self.source.copy()
         df['origin_doc_links'] = df['caption'].apply(self.parse_docs)
         df['origin_doc_links'] = df['origin_doc_links'].apply(lambda x: x.split(';'))
+        df = df.explode('origin_doc_links')
+        df['actual_doc_links'] = df['origin_doc_links'].apply(self.doc_link_correction)
+        df['filename'] = df['origin_doc_links'].apply(lambda x: x.split('/')[-1].split('?')[0] if 'media.nl' not in x else x.split('id=')[-1].split('&')[0])
+        df['file_type'] = df['filename'].apply(lambda x: '' if pd.isna(x) or x == '' else 'FILE')
+        result = df[['product-url', 'filename', 'file_type', 'origin_doc_links', 'actual_doc_links']]
+        result = result.explode(['origin_doc_links', 'actual_doc_links'])
+        result.to_csv('data/description_doc_link_rev1.csv', index=False)
 
     def get_video_desc(self):
         df = self.source.copy()
@@ -342,7 +369,7 @@ class GasScootersScraper:
         df['file_type'] = df['filename'].apply(lambda x: '' if pd.isna(x) or x == '' else 'VIDEO')
         result = df[['product-url', 'filename', 'file_type', 'origin_video_links', 'actual_video_links']]
         result = result.explode(['origin_video_links', 'actual_video_links'])
-        result.to_csv('data/description_video_link.csv', index=False)
+        result.to_csv('data/description_video_link_rev1.csv', index=False)
 
 
 if __name__ == '__main__':
@@ -352,6 +379,6 @@ if __name__ == '__main__':
     # gs.get_image()
     # gs.get_collection()
     # gs.get_image_desc()
-    # gs.get_doc_desc()
-    gs.get_video_desc()
+    gs.get_doc_desc()
+    # gs.get_video_desc()
     # print(gs.image_link_correction('http://lib.store.yahoo.net/lib/gasscooters/7107_susp_travel_d.jpg'))
